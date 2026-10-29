@@ -64,6 +64,7 @@ import {
   supportsGeneratedOutputActions,
 } from "@/components/chat/GeneratedOutputFileActions";
 import { useVoiceAutoplay } from "@/hooks/useVoiceAutoplay";
+import { splitSpeechText } from "@/lib/speech-chunks";
 import {
   SPEECH_PLAYBACK_FAILURE_MESSAGE,
   SPEECH_TIMEOUT_MESSAGE,
@@ -1519,56 +1520,82 @@ export function PlayAudioButton({
     });
 
     try {
-      const resp = await apiFetch(apiUrl("/api/voice/tts"), {
+      const preparedResponse = await apiFetch(apiUrl("/api/voice/tts/prepare"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: content }),
         signal: ac.signal,
       });
-      if (gen !== genRef.current) return;
-      if (!resp.ok) {
-        const detail = await ttsErrorMessage(resp);
-        if (gen !== genRef.current) return;
-        notify(
-          t(detail || (resp.status === 504 ? SPEECH_TIMEOUT_MESSAGE : SPEECH_PLAYBACK_FAILURE_MESSAGE)),
-          { tone: "error" },
-        );
-        stop();
-        return;
+      if (!preparedResponse.ok) {
+        const detail = await ttsErrorMessage(preparedResponse);
+        throw new Error(detail || (preparedResponse.status === 504 ? SPEECH_TIMEOUT_MESSAGE : SPEECH_PLAYBACK_FAILURE_MESSAGE));
       }
-      const blob = await resp.blob();
+      const prepared = await preparedResponse.json() as { text: string; max_chars: number };
       if (gen !== genRef.current) return;
-      if (urlRef.current) {
-        URL.revokeObjectURL(urlRef.current);
-        urlRef.current = null;
-      }
-      const url = URL.createObjectURL(blob);
-      urlRef.current = url;
-      audio.src = url;
-      audio.load();
-      audio.onended = () => {
-        if (gen !== genRef.current) return;
-        setState("idle");
-        cleanup();
-        if (activePlayback?.owner === playbackOwnerRef.current) activePlayback = null;
+      const chunks = splitSpeechText(prepared.text, prepared.max_chars);
+      if (!chunks.length) throw new Error(SPEECH_PLAYBACK_FAILURE_MESSAGE);
+      const pending = new Map<number, Promise<Blob>>();
+      const fetchChunk = (index: number): Promise<Blob> => {
+        const existing = pending.get(index);
+        if (existing) return existing;
+        const request = (async () => {
+          const resp = await apiFetch(apiUrl("/api/voice/tts"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: chunks[index] }),
+            signal: ac.signal,
+          });
+          if (!resp.ok) {
+            const detail = await ttsErrorMessage(resp);
+            throw new Error(detail || (resp.status === 504 ? SPEECH_TIMEOUT_MESSAGE : SPEECH_PLAYBACK_FAILURE_MESSAGE));
+          }
+          return resp.blob();
+        })();
+        pending.set(index, request);
+        return request;
       };
-      audio.onerror = () => {
+      for (let index = 0; index < chunks.length; index += 1) {
+        const blob = await fetchChunk(index);
         if (gen !== genRef.current) return;
-        notify(t(SPEECH_PLAYBACK_FAILURE_MESSAGE), {
-          tone: "error",
+        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+        const url = URL.createObjectURL(blob);
+        urlRef.current = url;
+        audio.src = url;
+        audio.load();
+        // Prefetch only one segment, while the current segment is playing.
+        if (index + 1 < chunks.length) void fetchChunk(index + 1).catch(() => {});
+        await new Promise<void>((resolve, reject) => {
+          const finish = () => {
+            ac.signal.removeEventListener("abort", cancel);
+            audio.onended = null;
+            audio.onerror = null;
+            resolve();
+          };
+          const cancel = () => finish();
+          ac.signal.addEventListener("abort", cancel, { once: true });
+          audio.onended = finish;
+          audio.onerror = () => {
+            ac.signal.removeEventListener("abort", cancel);
+            reject(new Error(SPEECH_PLAYBACK_FAILURE_MESSAGE));
+          };
+          void audio.play().then(() => {
+            if (gen === genRef.current) setState("playing");
+          }, (error: unknown) => {
+            ac.signal.removeEventListener("abort", cancel);
+            reject(error);
+          });
         });
-        stop();
-      };
-      await audio.play();
-      if (gen !== genRef.current) {
-        audio.pause();
-        return;
+        if (gen !== genRef.current) return;
+        audioRef.current = null;
+        URL.revokeObjectURL(url);
+        urlRef.current = null;
+        if (index + 1 < chunks.length) setState("loading");
       }
-      setState("playing");
+      stop();
     } catch (err) {
       if (gen !== genRef.current) return;
       if (err instanceof Error && err.name === "AbortError") return;
-      notify(t(SPEECH_PLAYBACK_FAILURE_MESSAGE), {
+      notify(t(err instanceof Error ? err.message : SPEECH_PLAYBACK_FAILURE_MESSAGE), {
         tone: "error",
       });
       stop();
