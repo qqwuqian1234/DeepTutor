@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from deeptutor.services.voice import (
     VoiceProviderError,
+    prepare_speech_text,
     synthesize_speech,
     transcribe_audio,
 )
@@ -35,6 +36,26 @@ class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1)
     voice: str | None = None
     format: str | None = None
+
+
+class TTSPreparationResponse(BaseModel):
+    """Plain speech text plus a limit from the active TTS model."""
+
+    text: str
+    max_chars: int
+
+
+@router.post("/tts/prepare", response_model=TTSPreparationResponse)
+async def prepare_text_to_speech(payload: TTSRequest) -> TTSPreparationResponse:
+    """Normalize a whole reply before the browser splits it for playback."""
+    try:
+        text, max_chars = prepare_speech_text(payload.text)
+    except ValueError as exc:  # missing/invalid configuration
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except VoiceProviderError as exc:
+        logger.warning("TTS preparation error: %s", exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return TTSPreparationResponse(text=text, max_chars=max_chars)
 
 
 @router.post("/tts")

@@ -11434,6 +11434,26 @@ export interface paths {
     readonly patch?: never;
     readonly trace?: never;
   };
+  readonly "/api/voice/tts/prepare": {
+    readonly parameters: {
+      readonly query?: never;
+      readonly header?: never;
+      readonly path?: never;
+      readonly cookie?: never;
+    };
+    readonly get?: never;
+    readonly put?: never;
+    /**
+     * Prepare Text To Speech
+     * @description Normalize a whole reply before the browser splits it for playback.
+     */
+    readonly post: operations["prepare_text_to_speech_api_voice_tts_prepare_post"];
+    readonly delete?: never;
+    readonly options?: never;
+    readonly head?: never;
+    readonly patch?: never;
+    readonly trace?: never;
+  };
   readonly "/files/attachments/{session_id}/{attachment_id}/{filename}": {
     readonly parameters: {
       readonly query?: never;
@@ -17598,6 +17618,16 @@ export interface components {
       } | null;
     };
     /**
+     * TTSPreparationResponse
+     * @description Plain speech text plus a limit from the active TTS model.
+     */
+    readonly TTSPreparationResponse: {
+      /** Max Chars */
+      readonly max_chars: number;
+      /** Text */
+      readonly text: string;
+    };
+    /**
      * TTSRequest
      * @description Text-to-speech request body.
      */
@@ -19319,6 +19349,8 @@ export type SchemaTopicSourceRequest =
   components["schemas"]["TopicSourceRequest"];
 export type SchemaTourCompletePayload =
   components["schemas"]["TourCompletePayload"];
+export type SchemaTtsPreparationResponse =
+  components["schemas"]["TTSPreparationResponse"];
 export type SchemaTtsRequest = components["schemas"]["TTSRequest"];
 export type SchemaTurnFailureCode = components["schemas"]["TurnFailureCode"];
 export type SchemaTurnQueryState = components["schemas"]["TurnQueryState"];
@@ -44896,6 +44928,43 @@ export interface operations {
         };
         content: {
           readonly "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      readonly 422: {
+        headers: {
+          readonly [name: string]: unknown;
+        };
+        content: {
+          readonly "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  readonly prepare_text_to_speech_api_voice_tts_prepare_post: {
+    readonly parameters: {
+      readonly query?: never;
+      readonly header?: {
+        readonly Authorization?: string | null;
+      };
+      readonly path?: never;
+      readonly cookie?: {
+        readonly dt_token?: string | null;
+      };
+    };
+    readonly requestBody: {
+      readonly content: {
+        readonly "application/json": components["schemas"]["TTSRequest"];
+      };
+    };
+    readonly responses: {
+      /** @description Successful Response */
+      readonly 200: {
+        headers: {
+          readonly [name: string]: unknown;
+        };
+        content: {
+          readonly "application/json": components["schemas"]["TTSPreparationResponse"];
         };
       };
       /** @description Validation Error */

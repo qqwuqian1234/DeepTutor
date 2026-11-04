@@ -12121,6 +12121,25 @@
         "title": "SyncResponse",
         "type": "object"
       },
+      "TTSPreparationResponse": {
+        "description": "Plain speech text plus a limit from the active TTS model.",
+        "properties": {
+          "max_chars": {
+            "title": "Max Chars",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "max_chars"
+        ],
+        "title": "TTSPreparationResponse",
+        "type": "object"
+      },
       "TTSRequest": {
         "description": "Text-to-speech request body.",
         "properties": {
@@ -68331,6 +68350,82 @@
           }
         },
         "summary": "Text To Speech",
+        "tags": [
+          "voice"
+        ]
+      }
+    },
+    "/api/voice/tts/prepare": {
+      "post": {
+        "description": "Normalize a whole reply before the browser splits it for playback.",
+        "operationId": "prepare_text_to_speech_api_voice_tts_prepare_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "dt_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dt Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TTSRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TTSPreparationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prepare Text To Speech",
         "tags": [
           "voice"
         ]

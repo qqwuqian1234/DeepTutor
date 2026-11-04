@@ -1,5 +1,6 @@
-/** Keep short replies intact; split longer ones at sentence or paragraph boundaries. */
-export function splitSpeechText(text: string, maxChars = 220): string[] {
+/** Keep prepared speech below the active model's input limit. */
+export function splitSpeechText(text: string, maxChars: number): string[] {
+  if (!Number.isSafeInteger(maxChars) || maxChars < 1) return [];
   const clean = text.trim();
   if (!clean || clean.length <= maxChars) return clean ? [clean] : [];
 

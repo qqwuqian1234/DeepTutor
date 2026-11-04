@@ -39,6 +39,23 @@ def test_tts_returns_audio_bytes(client: TestClient, monkeypatch: pytest.MonkeyP
     assert captured == {"text": "hello", "voice": "nova", "format": None}
 
 
+def test_tts_prepare_returns_normalized_text_and_model_limit(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_prepare(text: str) -> tuple[str, int]:
+        captured["text"] = text
+        return "plain speech", 200
+
+    monkeypatch.setattr(voice_router, "prepare_speech_text", fake_prepare)
+    resp = client.post("/api/voice/tts/prepare", json={"text": "**plain speech**"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"text": "plain speech", "max_chars": 200}
+    assert captured == {"text": "**plain speech**"}
+
+
 def test_tts_wraps_pcm_bytes_as_browser_playable_wav(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

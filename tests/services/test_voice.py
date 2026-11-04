@@ -21,7 +21,7 @@ from deeptutor.services.config.provider_runtime import (
     resolve_stt_runtime_config,
     resolve_tts_runtime_config,
 )
-from deeptutor.services.voice import synthesize_speech, transcribe_audio
+from deeptutor.services.voice import prepare_speech_text, synthesize_speech, transcribe_audio
 from deeptutor.services.voice.adapters.dashscope import (
     DashScopeSTTAdapter,
     DashScopeTTSAdapter,
@@ -146,6 +146,25 @@ def test_strip_markdown_drops_code_and_unwraps_links() -> None:
     assert "print(1)" not in out  # fenced code dropped
     assert "**" not in out and "[" not in out and "#" not in out
     assert "*" not in out
+
+
+def test_prepare_speech_text_normalizes_before_applying_groq_limit() -> None:
+    catalog = _voice_catalog()
+    profile = catalog["services"]["tts"]["profiles"][0]
+    profile["binding"] = "groq"
+    profile["models"][0]["model"] = "canopylabs/orpheus-v1-english"
+    text = (
+        "请阅读这个[很长的链接标题](https://example.test/" + "url" * 120 + "). "
+        "```python\\n" + "print('不要朗读代码')\\n" + "``` "
+        "再计算 $x^2$。"
+    )
+
+    prepared, max_chars = prepare_speech_text(text, catalog=catalog)
+
+    assert max_chars == 200
+    assert "https://" not in prepared
+    assert "不要朗读代码" not in prepared
+    assert "squared" in prepared
 
 
 def test_strip_markdown_does_not_speak_asterisks_for_bold() -> None:

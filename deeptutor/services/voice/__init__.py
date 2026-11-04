@@ -20,6 +20,11 @@ from deeptutor.services.voice.base import (
 from deeptutor.services.voice.config import STTConfig, TTSConfig
 
 
+# Long replies start playing sooner when kept near this size.  The active
+# provider can lower it through its model catalog's ``max_input_chars``.
+DEFAULT_SPEECH_CHUNK_CHARS = 220
+
+
 def _math_speak_from_settings() -> bool:
     """Read the Math Speak UI preference; default on if settings are unavailable."""
     try:
@@ -62,6 +67,28 @@ async def synthesize_speech(
         raise VoiceProviderError("Nothing to speak after cleaning the text.")
     adapter = get_tts_adapter(config.adapter)
     return await synthesize_with_timeout(adapter, prepared, config)
+
+
+def prepare_speech_text(
+    text: str,
+    *,
+    catalog: dict[str, Any] | None = None,
+    math_speak: bool | None = None,
+) -> tuple[str, int]:
+    """Normalize Markdown once and return the safe client chunk size.
+
+    Playback sends each resulting plain-text chunk to ``synthesize_speech``.
+    Keeping the Markdown transformation here means links, math, and fenced
+    code retain their semantics even when a reply spans several requests.
+    """
+    from deeptutor.services.config.provider_runtime import resolve_tts_runtime_config
+
+    config = resolve_tts_runtime_config(catalog=catalog)
+    speak_math = _math_speak_from_settings() if math_speak is None else math_speak
+    prepared = strip_markdown_for_speech(text, math_speak=speak_math)
+    if not prepared:
+        raise VoiceProviderError("Nothing to speak after cleaning the text.")
+    return prepared, min(DEFAULT_SPEECH_CHUNK_CHARS, config.max_input_chars)
 
 
 async def transcribe_audio(
@@ -111,6 +138,8 @@ __all__ = [
     "VoiceProviderError",
     "TTSConfig",
     "STTConfig",
+    "DEFAULT_SPEECH_CHUNK_CHARS",
+    "prepare_speech_text",
     "synthesize_speech",
     "transcribe_audio",
     "transcribe_audio_cues",
