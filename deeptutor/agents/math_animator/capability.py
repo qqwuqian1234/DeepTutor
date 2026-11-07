@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import time
 from typing import Any
 
@@ -13,13 +14,28 @@ from deeptutor.core.trace import build_trace_metadata, merge_trace_metadata, new
 from deeptutor.i18n import StatusI18n
 from deeptutor.runtime.agentic.usage import UsageTracker
 from deeptutor.runtime.bootstrap.builtin_capabilities import builtin_capability_manifest
+from deeptutor.agents._shared.teaching_fallback import stream_teaching_fallback
 from deeptutor.runtime.stream_bus import StreamBus
+
+logger = logging.getLogger(__name__)
 
 
 class MathAnimatorCapability(TurnCapability):
     manifest = builtin_capability_manifest("math_animator")
 
     async def run(self, context: UnifiedContext, stream: StreamBus) -> None:
+        try:
+            await self._run_pipeline(context, stream)
+        except Exception as exc:
+            logger.warning("math_animator failed (%s); teaching in text", exc)
+            await stream_teaching_fallback(
+                context,
+                stream,
+                source=self.name,
+                reason=str(exc),
+            )
+
+    async def _run_pipeline(self, context: UnifiedContext, stream: StreamBus) -> None:
         if importlib.util.find_spec("manim") is None:
             raise RuntimeError(
                 "math_animator requires optional dependencies. "

@@ -6406,5 +6406,12 @@
   "Learning text preview": "Öğrenme metni önizlemesi",
   "Reset learning text": "Öğrenme metnini sıfırla",
   "language.portuguese": "Português",
-  "language.japanese": "日本語"
+  "language.japanese": "日本語",
+  "Answer first": "Answer first",
+  "Write your own answer before the explanation": "Write your own answer before the explanation",
+  "Phenomenon, reason, or equations": "Phenomenon, reason, or equations",
+  "Compare with the explanation": "Compare with the explanation",
+  "Skip and explain": "Skip and explain",
+  "Off by default. Use it when you want to try before reading the explanation.": "Off by default. Use it when you want to try before reading the explanation.",
+  "Your attempt": "Your attempt"
 }

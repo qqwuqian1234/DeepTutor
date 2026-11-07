@@ -119,3 +119,35 @@ async def test_math_animator_capability_emits_summary_and_result(
     assert result_event.metadata["output_mode"] == "video"
     assert result_event.metadata["code"]["language"] == "python"
     assert result_event.metadata["artifacts"][0]["filename"] == "video.mp4"
+
+
+@pytest.mark.asyncio
+async def test_math_animator_missing_dependency_falls_back_to_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "deeptutor.agents.math_animator.capability.importlib.util.find_spec",
+        lambda _name: None,
+    )
+    called: dict[str, str] = {}
+
+    async def fallback(context, stream, *, source, reason):
+        called["source"] = source
+        called["reason"] = reason
+        await stream.content("切线不等式可以用文字说明。", source=source, stage="responding")
+
+    monkeypatch.setattr(
+        "deeptutor.agents.math_animator.capability.stream_teaching_fallback",
+        fallback,
+    )
+    context = UnifiedContext(
+        session_id="session_1",
+        user_message="切线不等式怎么估计",
+        active_capability="math_animator",
+        language="zh",
+    )
+    events = await _collect_events(lambda bus: MathAnimatorCapability().run(context, bus))
+    assert "切线" in called["reason"] or "manim" in called["reason"].lower() or called["reason"]
+    content = "".join(event.content for event in events if event.type == StreamEventType.CONTENT)
+    assert "切线不等式" in content
+    assert not any(event.type == StreamEventType.ERROR for event in events)

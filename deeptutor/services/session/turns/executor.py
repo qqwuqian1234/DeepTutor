@@ -25,6 +25,7 @@ from deeptutor.services.session.workspace_preferences import (
 from deeptutor.services.workspace.activity import workspace_writer
 
 from .._turn_runtime_shared import (
+    _answer_first_user_note,
     _assemble_persisted_answer,
     _build_question_bank_context,
     _clip_text,
@@ -32,6 +33,7 @@ from .._turn_runtime_shared import (
     _extract_followup_question_context,
     _extract_memory_references,
     _extract_side_chat_context,
+    _format_answer_first_prompt,
     _format_followup_question_context,
     _format_side_chat_context,
     _mastery_action_context,
@@ -46,6 +48,7 @@ from .._turn_runtime_shared import (
     _reading_workspace_id,
     _repair_chinese_emphasis_for_persistence,
     _request_snapshot_metadata,
+    persisted_answer_problem,
     _resolve_side_chat_context,
     _resolve_turn_failure_metadata,
     _resolve_turn_outcome,
@@ -138,6 +141,48 @@ class TurnExecutor:
             ui_language: str,
         ) -> None: ...
 
+    async def _record_answer_first_attempt(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        question: str,
+        attempt: str,
+    ) -> None:
+        """Keep the student's pre-explanation attempt without grading it.
+
+        The question bank card treats a boolean ``is_correct`` as right or
+        wrong, so this writes only the attempt log. An ungraded self-check
+        must not show up as an incorrect quiz answer.
+        """
+        recorder = getattr(self.store, "append_assessment_attempt", None)
+        if not callable(recorder):
+            return
+        import hashlib
+        import time
+
+        question_text = question.strip()[:4000]
+        question_id = "answer-first-" + hashlib.sha1(question_text.encode()).hexdigest()[:16]
+        await recorder(
+            session_id,
+            None,
+            {
+                "attempt_id": f"{turn_id}:{question_id}",
+                "question_id": question_id,
+                "turn_id": turn_id,
+                "session_id": session_id,
+                "origin_type": "conversation",
+                "origin_ref": session_id,
+                "source": "deep_question",
+                "assessment_type": "qualitative",
+                "result": "ungraded",
+                "question": question_text,
+                "question_type": "answer_first",
+                "user_answer": attempt[:8000],
+                "occurred_at": time.time(),
+            },
+        )
+
     @workspace_writer
     async def _run_turn(self, execution: _TurnExecution) -> None:
         payload = execution.payload
@@ -150,6 +195,7 @@ class TurnExecutor:
         attachment_records = []
         assistant_events: list[dict[str, Any]] = []
         assistant_content = ""
+        new_user_message_id: int | str | None = None
         provider_response_state: dict[str, Any] | None = None
         context: UnifiedContext | None = None
         # Keep every published answer segment, including commentary before tools.
@@ -256,6 +302,10 @@ class TurnExecutor:
             from deeptutor.services.workspace import get_content_workspace_service
 
             request_config = dict(payload.get("config", {}) or {})
+            answer_first = (
+                payload.get("answer_first") if isinstance(payload.get("answer_first"), dict) else {}
+            )
+            answer_first_attempt = str(answer_first.get("attempt") or "").strip()
             followup_question_context = _extract_followup_question_context(
                 {"followup_question_context": payload.get("followup_question_context")}
             )
@@ -903,7 +953,6 @@ class TurnExecutor:
             # SQLite returns integer rowids; PocketBase returns its string
             # record ids. Both are opaque to this layer — they only flow into
             # ``parent_message_id`` chaining and the DONE reconcile metadata.
-            new_user_message_id: int | str | None = None
             if persist_user_message:
                 # Pass parent explicitly only when the FE pinned it (covers
                 # both branched edits with a positive id and root edits
@@ -940,6 +989,20 @@ class TurnExecutor:
                     },
                     **parent_kwargs,
                 )
+            if answer_first_attempt:
+                try:
+                    await self._record_answer_first_attempt(
+                        session_id=session_id,
+                        turn_id=turn_id,
+                        question=raw_user_content,
+                        attempt=answer_first_attempt,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Could not record the answer-first attempt for turn %s",
+                        turn_id,
+                        exc_info=True,
+                    )
 
             if not side_chat_context:
                 from deeptutor.services.task_board import get_task_board_store
@@ -951,6 +1014,20 @@ class TurnExecutor:
                     session_id,
                 )
                 source_manifest_text += task_context
+
+            answer_first_prompt = ""
+            if answer_first_attempt:
+                answer_first_prompt = _format_answer_first_prompt(
+                    answer_first_attempt,
+                    language=str(payload.get("language") or "en"),
+                )
+                effective_user_message = (
+                    f"{effective_user_message}\n\n"
+                    + _answer_first_user_note(
+                        answer_first_attempt,
+                        language=str(payload.get("language") or "en"),
+                    )
+                )
 
             context = UnifiedContext(
                 session_id=session_id,
@@ -1005,6 +1082,7 @@ class TurnExecutor:
                     "book_references": book_references,
                     "reading_references": reading_references,
                     "learner_profile_prompt": learner_profile_prompt,
+                    "answer_first_prompt": answer_first_prompt,
                     "mastery_path_id": _mastery_path_id(payload.get("mastery_path_id")),
                     "mastery_mode": workspace_mode == WORKSPACE_MODE_MASTERY,
                     # What this conversation is doing. It picks the tutor's
@@ -1222,6 +1300,32 @@ class TurnExecutor:
                 pending_done_event,
             )
             failure_code, retryable = _resolve_turn_failure_metadata(assistant_events)
+            if turn_status == "completed":
+                problem = persisted_answer_problem(
+                    assistant_content,
+                    assistant_events,
+                    generated_attachments,
+                    language=str(payload.get("language") or "en"),
+                )
+                if problem:
+                    error_event = StreamEvent(
+                        type=StreamEventType.ERROR,
+                        source=capability_name,
+                        content=problem,
+                        metadata={
+                            "turn_terminal": True,
+                            "status": "failed",
+                            "error_code": "incomplete_output",
+                            "retryable": True,
+                        },
+                    )
+                    await self._publish_live_event(execution, error_event)
+                    assistant_events.append(error_event.to_dict())
+                    turn_status, turn_error = _resolve_turn_outcome(
+                        assistant_events,
+                        pending_done_event,
+                    )
+                    failure_code, retryable = _resolve_turn_failure_metadata(assistant_events)
             if pending_done_event is None:
                 pending_done_event = StreamEvent(
                     type=StreamEventType.DONE,
@@ -1351,7 +1455,8 @@ class TurnExecutor:
                 else "Turn cancelled"
             )
             failure_code = "server_shutdown" if execution.shutdown_requested else ""
-            retryable = execution.shutdown_requested
+            # A stopped turn, including one with an empty answer, can be run again.
+            retryable = True
             if not stream_done_sent:
                 await self._publish_live_event(
                     execution,
@@ -1377,8 +1482,20 @@ class TurnExecutor:
             # suppressed separately so the status update below always runs —
             # a turn left "running" gets mislabelled as a restart orphan.
             partial_content = _persisted_answer()
-            if partial_content or generated_attachments or assistant_events:
+            # Once the question itself was saved, leave an assistant row even
+            # when nothing was generated so a cancelled question can be retried.
+            if (
+                partial_content
+                or generated_attachments
+                or assistant_events
+                or new_user_message_id is not None
+            ):
                 with contextlib.suppress(Exception):
+                    parent_kwargs: dict[str, Any] = (
+                        {"parent_message_id": new_user_message_id}
+                        if new_user_message_id is not None
+                        else {}
+                    )
                     assistant_message_id = await asyncio.shield(
                         self.store.add_message(
                             session_id=session_id,
@@ -1402,6 +1519,7 @@ class TurnExecutor:
                                 }
                                 or None
                             ),
+                            **parent_kwargs,
                         )
                     )
                     with contextlib.suppress(Exception):

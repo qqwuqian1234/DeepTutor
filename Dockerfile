@@ -9,6 +9,12 @@
 #   docker run -p 127.0.0.1:3782:3782 -p 127.0.0.1:8001:8001 \
 #     -v deeptutor-data:/app/data deeptutor:local
 #
+# The production target bakes the math-animator extra (Manim) plus ffmpeg,
+# Cairo/Pango, and a minimal LaTeX set. Smoke-test the renderer without
+# starting the app:
+#   docker run --rm --entrypoint python deeptutor:local -c \
+#     "import manim, manimpango; import shutil; assert all(shutil.which(c) for c in ('ffmpeg','latex','dvisvgm'))"
+#
 # Prerequisites:
 #   1. Runtime settings are created under data/user/settings on first start
 #   2. Configure provider profiles from the web Settings page or model_catalog.json
@@ -88,6 +94,9 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
     libxrender1 \
     pkg-config \
     libssl-dev \
+    cmake \
+    libcairo2-dev \
+    libpango1.0-dev \
     && rm -rf /var/lib/apt/lists/* \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
@@ -99,6 +108,17 @@ COPY requirements/ ./requirements/
 COPY requirements.txt ./
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
+
+# Official math-animator extra. On a source tree this expands
+# deeptutor-renderer-manim to the module requirement manim>=0.19.0
+# (see build_metadata.source_optional_dependencies). The renderer code
+# already ships in the source image; installing the feature wheel on top
+# would add a second copy of it.
+COPY pyproject.toml build_metadata.py ./
+COPY deeptutor/__version__.py ./deeptutor/__version__.py
+COPY deeptutor/modules/manifests/ ./deeptutor/modules/manifests/
+COPY scripts/install_extras.py ./scripts/install_extras.py
+RUN python scripts/install_extras.py math-animator
 
 # ============================================
 # Stage 3: Production Image
@@ -137,6 +157,10 @@ WORKDIR /app
 # Office previews convert documents to PDF in the main app. Writer, Calc and
 # Impress cover DOCX, XLSX and PPTX; Noto CJK preserves Chinese text and
 # Liberation supplies common Latin font substitutes in the rendered pages.
+# Math animations need ffmpeg, Cairo/Pango (Manim's vector text), and a
+# LaTeX set that can build a typical high-school MathTex scene. Manim's
+# template uses standalone + amsmath + amssymb; standalone.cls is in
+# texlive-latex-extra. The full TeX Live collection is intentionally not installed.
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get -o Acquire::Retries=3 update \
     && apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
@@ -155,6 +179,16 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
     libreoffice-impress \
     fonts-noto-cjk \
     fonts-liberation \
+    ffmpeg \
+    pkg-config \
+    libcairo2 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    texlive-latex-base \
+    texlive-latex-recommended \
+    texlive-fonts-recommended \
+    texlive-latex-extra \
+    dvisvgm \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Node.js from node-runtime stage (platform-matched binary)
@@ -170,6 +204,14 @@ RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 RUN rm -rf /usr/local/lib/python3.11/site-packages
 COPY --from=python-base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=python-base /usr/local/bin /usr/local/bin
+
+# Fail the image build if the renderer or its system tools are missing.
+# A later render error still falls back to a text explanation; this check
+# only proves the production image can import Manim and see ffmpeg/LaTeX.
+RUN python -c "import manim, manimpango" \
+    && command -v ffmpeg \
+    && command -v latex \
+    && command -v dvisvgm
 
 # Copy built frontend from frontend-builder stage (standalone mode)
 # The standalone output contains a self-contained server.js + minimal node_modules
@@ -440,10 +482,13 @@ python -c "from deeptutor.services.setup.data_volume import check_container_data
 # Optional dependencies (#762). A container is disposable, so anything
 # `docker exec … pip install`ed into a running one is gone at the next
 # `compose down`. Declare them on the deployment instead and every container
-# started from it has them:
+# started from it has them.
+#
+# math-animator, ffmpeg, Cairo/Pango, and the minimal LaTeX set are already
+# in this image. Use DEEPTUTOR_EXTRAS for other extras (partners, guard, …):
 #
 #   environment:
-#     DEEPTUTOR_EXTRAS: "math-animator,partners"
+#     DEEPTUTOR_EXTRAS: "partners"
 #     DEEPTUTOR_APT_PACKAGES: "ffmpeg"
 #
 # Both steps are idempotent — a warm container only pays a check — and neither
