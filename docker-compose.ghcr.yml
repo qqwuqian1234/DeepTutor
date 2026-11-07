@@ -3,6 +3,8 @@
 # ============================================
 # Run DeepTutor using the official pre-built image from GitHub Container Registry.
 # No local build required — the image is pulled automatically.
+# That published image does not include Manim. The locally built Dockerfile
+# (docker-compose.yml, tag deeptutor-local) does.
 #
 # Usage:
 #   python scripts/docker_compose.py -f docker-compose.ghcr.yml up -d

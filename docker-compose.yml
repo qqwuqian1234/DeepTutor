@@ -112,9 +112,11 @@ services:
       # these with `docker exec` does not survive `compose down`, so declare
       # them here instead. Both are idempotent and never fatal; the pip cache
       # lives on the data volume, so a rebuild reuses what it already fetched.
-      # Extras come from pyproject.toml — preview one with
+      # The image built from Dockerfile already includes math-animator
+      # (Manim), ffmpeg, Cairo/Pango, and a minimal LaTeX set. Use this list
+      # for other extras. Preview one with
       # `python scripts/install_extras.py --dry-run "<name>"`.
-      # - DEEPTUTOR_EXTRAS=math-animator,partners
+      # - DEEPTUTOR_EXTRAS=partners
       # - DEEPTUTOR_APT_PACKAGES=ffmpeg
 
       # Unraid / NAS bind mounts: set these to the host owner of ./data

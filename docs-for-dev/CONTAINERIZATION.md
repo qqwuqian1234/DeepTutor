@@ -73,6 +73,42 @@ Open <http://127.0.0.1:3782>. The container creates
 from the Web Settings page. Config, API keys, logs, workspace files,
 memory, and knowledge bases persist in the `deeptutor-data` named volume.
 
+### Math animations in a locally built image
+
+The production stage of [Dockerfile](../Dockerfile) installs the official
+`math-animator` extra and the system packages a high-school Manim scene
+needs. This is the image built for the local `deeptutor-local` containers.
+The published `ghcr.io/hkuds/deeptutor` image does not include them; that
+path still uses `DEEPTUTOR_EXTRAS` / `DEEPTUTOR_APT_PACKAGES` at start.
+
+On this source tree the extra is declared in `pyproject.toml` as
+`deeptutor-renderer-manim`. `python scripts/install_extras.py math-animator`
+expands that wheel pin to the module requirement `manim>=0.19.0` instead of
+installing a second copy of the renderer over the source tree. The renderer
+module itself is already in the image. `pip install manim` alone is not the
+install path used here.
+
+System packages in the production image, and not `texlive-full`:
+
+- `ffmpeg`
+- `pkg-config`, `libcairo2`, `libpango-1.0-0`, `libpangocairo-1.0-0`
+- `texlive-latex-base`, `texlive-latex-recommended`,
+  `texlive-fonts-recommended`, `texlive-latex-extra` (`standalone.cls`,
+  which Manim's MathTex template uses), and `dvisvgm`
+
+Rebuild the local image the same way as before, then check the renderer
+without starting the app or touching student data:
+
+```bash
+docker build -t deeptutor-local:TAG .
+docker run --rm --entrypoint python deeptutor-local:TAG -c \
+  "import manim, manimpango; import shutil; assert all(shutil.which(c) for c in ('ffmpeg','latex','dvisvgm'))"
+```
+
+The image build runs that import itself and fails if Manim or those tools
+are missing. If a scene still fails at runtime, the teaching turn falls
+back to a text explanation.
+
 ### Unraid / NAS bind mounts (PUID / PGID)
 
 Unraid and many NAS templates own appdata as a host user that is **not**

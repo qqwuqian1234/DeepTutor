@@ -184,6 +184,29 @@ def test_dockerfile_is_json_driven_without_bundle_sed() -> None:
     assert "export_runtime_settings_to_env" in content
 
 
+def test_dockerfile_bakes_math_animator_and_minimal_latex() -> None:
+    """The local production image can render Manim, not only fall back to text."""
+    root = Path(__file__).resolve().parents[2]
+    content = (root / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "python scripts/install_extras.py math-animator" in content
+    assert "texlive-full" not in content
+    for package in (
+        "ffmpeg",
+        "pkg-config",
+        "libcairo2",
+        "libpango-1.0-0",
+        "libpangocairo-1.0-0",
+        "texlive-latex-base",
+        "texlive-latex-recommended",
+        "texlive-fonts-recommended",
+        "texlive-latex-extra",
+        "dvisvgm",
+    ):
+        assert package in content
+    assert "import manim, manimpango" in content
+
+
 def test_dockerfile_pins_node_to_security_fixed_version() -> None:
     root = Path(__file__).resolve().parents[2]
     content = (root / "Dockerfile").read_text(encoding="utf-8")
