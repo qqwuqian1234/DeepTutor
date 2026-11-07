@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from deeptutor.agents._shared.capability_result import emit_capability_result
+from deeptutor.agents._shared.teaching_fallback import stream_teaching_fallback
 from deeptutor.core.capability_protocol import TurnCapability
 from deeptutor.core.context import UnifiedContext
 from deeptutor.core.trace import merge_trace_metadata
@@ -110,19 +111,29 @@ class VisualizeCapability(TurnCapability):
                 )
 
         # Artifact renderers retain their specialized subprocess pipeline.
+        # A missing Manim install or a failed render must not end the lesson.
         if render_mode in _MANIM_RENDER_TYPES:
             from deeptutor.services.llm.config import get_llm_config
 
             llm_config = get_llm_config()
-            await self._run_manim_path(
-                context=context,
-                stream=stream,
-                render_type=render_mode,
-                visualize_config=request_config,
-                history_context=history_context,
-                usage=UsageTracker(model=getattr(llm_config, "model", None)),
-                i18n=i18n,
-            )
+            try:
+                await self._run_manim_path(
+                    context=context,
+                    stream=stream,
+                    render_type=render_mode,
+                    visualize_config=request_config,
+                    history_context=history_context,
+                    usage=UsageTracker(model=getattr(llm_config, "model", None)),
+                    i18n=i18n,
+                )
+            except Exception as exc:
+                logger.warning("Manim visualization failed (%s); teaching in text", exc)
+                await stream_teaching_fallback(
+                    context,
+                    stream,
+                    source=self.name,
+                    reason=str(exc),
+                )
             return
 
         # The generic capability only marks the turn and owns the final
@@ -188,14 +199,20 @@ class VisualizeCapability(TurnCapability):
         envelope = context.metadata.get(VISUALIZATION_RESULT_KEY)
         if not isinstance(envelope, dict):
             if tool_calling_disabled_for:
-                raise RuntimeError(
-                    i18n.t(
-                        "no_payload_tool_calling_disabled",
-                        _NO_PAYLOAD_TOOL_CALLING_DISABLED,
-                        target=tool_calling_disabled_for,
-                    )
+                reason = i18n.t(
+                    "no_payload_tool_calling_disabled",
+                    _NO_PAYLOAD_TOOL_CALLING_DISABLED,
+                    target=tool_calling_disabled_for,
                 )
-            raise RuntimeError(i18n.t("no_payload", _NO_PAYLOAD))
+            else:
+                reason = i18n.t("no_payload", _NO_PAYLOAD)
+            await stream_teaching_fallback(
+                context,
+                stream,
+                source=self.name,
+                reason=reason,
+            )
+            return
 
         payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
         data = payload.get("data")
@@ -204,6 +221,18 @@ class VisualizeCapability(TurnCapability):
         serialized = (
             data if isinstance(data, str) else json.dumps(data, ensure_ascii=False, indent=2)
         )
+        if str(envelope.get("render_type") or "") == "html":
+            from deeptutor.agents.visualize.utils import html_truncation_error
+
+            truncated = html_truncation_error(serialized)
+            if truncated:
+                await stream_teaching_fallback(
+                    context,
+                    stream,
+                    source=self.name,
+                    reason=truncated,
+                )
+                return
         content_md = f"```{language_tag}\n{serialized}\n```"
         await stream.content(content_md, source=self.name, stage="reviewing")
 

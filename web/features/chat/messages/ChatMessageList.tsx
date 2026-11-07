@@ -2057,6 +2057,14 @@ export const UserMessage = memo(function UserMessage({
             <div dir="auto" className="whitespace-pre-wrap"><LearningText size={14}>{msg.content}</LearningText></div>
           </div>
         )}
+        {!editing && snap?.answerFirstAttempt ? (
+          <div className="w-[min(620px,75vw)] rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-left">
+            <div className="text-[10.5px] font-medium text-[var(--muted-foreground)]">{t("Your attempt")}</div>
+            <div dir="auto" className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--foreground)]">
+              {snap.answerFirstAttempt}
+            </div>
+          </div>
+        ) : null}
         {/* Recovery records are local to this browser. Keep their actions
             visible so an old pending submission can be resolved in place. */}
         {!editing && msg.failedSubmission ? (
@@ -2581,9 +2589,15 @@ export const ChatMessageList = memo(function ChatMessageList({
           !isStreaming &&
           isLastAssistant &&
           Boolean(pairedUserMessage) &&
-          (!pairedUserMessage?.capability ||
-            pairedUserMessage?.capability === "chat") &&
-          (showActions || terminalErrorRetryable);
+          (
+            stopped ||
+            emptyResponse ||
+            (
+              (!pairedUserMessage?.capability ||
+                pairedUserMessage?.capability === "chat") &&
+              (showActions || terminalErrorRetryable)
+            )
+          );
         const showResend =
           !isStreaming &&
           isLastAssistant &&
@@ -2655,6 +2669,15 @@ export const ChatMessageList = memo(function ChatMessageList({
                 <div role="status" className="mt-3 flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
                   <Square className="h-3.5 w-3.5" aria-hidden="true" />
                   <span>{t("Stopped")}</span>
+                  {showRegenerate && !showActions ? (
+                    <button
+                      type="button"
+                      onClick={() => onRegenerateMessage()}
+                      className="shrink-0 rounded-md px-2 py-1 text-[11.5px] font-medium text-[var(--foreground)] hover:bg-[var(--muted)]"
+                    >
+                      {t("Retry")}
+                    </button>
+                  ) : null}
                 </div>
               );
               if (!terminalError && !emptyResponse) return null;
@@ -2666,7 +2689,7 @@ export const ChatMessageList = memo(function ChatMessageList({
                       ? t("The turn was interrupted.")
                       : t("No response was generated. Please try again."))}
                   </span>
-                  {showRegenerate ? (
+                  {(showRegenerate || (emptyResponse && isLastAssistant && !isStreaming)) ? (
                     <button
                       type="button"
                       onClick={() => onRegenerateMessage()}

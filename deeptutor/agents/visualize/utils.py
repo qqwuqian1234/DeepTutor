@@ -57,6 +57,31 @@ def is_valid_html_document(html: str) -> bool:
     return "<html" in lowered or "<!doctype" in lowered or "<body" in lowered or "<div" in lowered
 
 
+def html_truncation_error(html: str) -> str:
+    """Return why *html* is not a finished document, or "" when it is complete.
+
+    A payload that merely contains an opening tag used to pass. Token limits
+    then stored a page cut off mid-element and the turn was still marked
+    completed. A finished document closes its body, html, script and style
+    tags, and does not end inside a tag.
+    """
+    text = (html or "").strip()
+    if not text:
+        return "Generated HTML is empty."
+    lowered = text.lower()
+    if "<html" not in lowered and "<!doctype" not in lowered:
+        return "Output does not look like a renderable HTML document."
+    if "</body>" not in lowered or "</html>" not in lowered:
+        return "HTML document was cut off before </body></html>."
+    if text.rfind("<") > text.rfind(">"):
+        return "HTML document was cut off mid-tag."
+    if lowered.count("<script") != lowered.count("</script>"):
+        return "HTML <script> was cut off before it closed."
+    if lowered.count("<style") != lowered.count("</style>"):
+        return "HTML <style> was cut off before it closed."
+    return ""
+
+
 def build_fallback_html(*, title: str, summary: str = "", note: str = "") -> str:
     """Build a minimal, self-contained fallback HTML page.
 
@@ -193,9 +218,10 @@ def validate_visualization(code: str, render_type: str) -> tuple[bool, str]:
         return True, ""
 
     if render_type == "html":
-        if is_valid_html_document(text):
-            return True, ""
-        return False, "Output does not look like a renderable HTML document."
+        error = html_truncation_error(text)
+        if error:
+            return False, error
+        return True, ""
 
     # Unknown render types are not gated.
     return True, ""
@@ -205,6 +231,7 @@ __all__ = [
     "build_fallback_html",
     "extract_code_block",
     "extract_json_object",
+    "html_truncation_error",
     "is_valid_html_document",
     "validate_visualization",
 ]

@@ -35,6 +35,7 @@ import type { SelectedRecord } from "@/lib/notebook-selection-types";
 import type { SelectedHistorySession } from "@/components/chat/HistorySessionPicker";
 import type { SelectedQuestionEntry } from "@/components/chat/QuestionBankPicker";
 import ChatComposer from "@/components/chat/home/ChatComposer";
+import { AnswerFirstBar } from "@/features/chat/AnswerFirstBar";
 import { ChatMessageList } from "@/features/chat/messages";
 import { TurnNavigator } from "@/components/chat/home/TurnNavigator";
 import SessionLoadingView from "@/components/chat/home/SessionLoadingView";
@@ -596,6 +597,30 @@ export default function ChatWorkspace() {
   // ``AskUserOptions`` chip click can drop text into the composer textarea.
   const prefillInputRef = useRef<((text: string) => void) | null>(null);
   const focusComposerRef = useRef<(() => void) | null>(null);
+  const answerFirstAttemptRef = useRef<string | null>(null);
+  const answerFirstBypassRef = useRef(false);
+  const [answerFirst, setAnswerFirst] = useState(false);
+  const [answerFirstHold, setAnswerFirstHold] = useState<string | null>(null);
+  const [answerFirstDraft, setAnswerFirstDraft] = useState("");
+  useEffect(() => {
+    try {
+      setAnswerFirst(window.localStorage.getItem("deeptutor.answerFirst") === "1");
+    } catch {
+      setAnswerFirst(false);
+    }
+  }, []);
+  const toggleAnswerFirst = useCallback(() => {
+    setAnswerFirst((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem("deeptutor.answerFirst", next ? "1" : "0");
+      } catch {
+        /* The toggle still works for this page when storage is blocked. */
+      }
+      if (!next) setAnswerFirstHold(null);
+      return next;
+    });
+  }, []);
   const handlePrefillComposer = useCallback((text: string) => {
     prefillInputRef.current?.(text);
   }, []);
@@ -2115,7 +2140,7 @@ export default function ChatWorkspace() {
         config = { ...(config ?? {}), linked_task_ids: draftTaskIds };
       }
       const memoryPayload = [...memoryReferencesPayload];
-      const messageContent =
+      let messageContent =
         content ||
         (selectedNotebookRecords.length ||
         selectedBookReferences.length ||
@@ -2129,6 +2154,28 @@ export default function ChatWorkspace() {
         (attachments.some((a) => a.type === "image")
           ? t("Please analyze the attached image(s).")
           : "");
+      if (answerFirstAttemptRef.current) {
+        config = {
+          ...(config ?? {}),
+          answer_first: { attempt: answerFirstAttemptRef.current },
+        };
+        answerFirstAttemptRef.current = null;
+      } else if (answerFirstBypassRef.current) {
+        answerFirstBypassRef.current = false;
+      } else if (
+        answerFirst &&
+        activeCap.value === "chat" &&
+        !state.isStreaming &&
+        !isQuizMode &&
+        !isVisualizeMode &&
+        !isResearchMode &&
+        !awaitingUserReplyRef.current &&
+        messageContent.trim()
+      ) {
+        setAnswerFirstHold(messageContent);
+        setAnswerFirstDraft("");
+        return;
+      }
       // Persona is NOT passed per-call here: it is a session-level
       // preference (state.personaSelection) that sendMessage resolves and
       // sends with every turn.
@@ -2228,6 +2275,8 @@ export default function ChatWorkspace() {
       submitUserReply,
       t,
       visualizeConfig,
+      answerFirst,
+      activeCap.value,
     ],
   );
 
@@ -2995,7 +3044,36 @@ export default function ChatWorkspace() {
                 focusInputRef={focusComposerRef}
                 queueWhileStreaming
                 inputHeader={
-                  retrying ? (
+                  <>
+                  {activeCap.value === "chat" || answerFirstHold ? (
+                  <AnswerFirstBar
+                    enabled={answerFirst}
+                    holdingQuestion={answerFirstHold}
+                    draft={answerFirstDraft}
+                    onDraftChange={setAnswerFirstDraft}
+                    onToggle={toggleAnswerFirst}
+                    onCompare={() => {
+                      const question = answerFirstHold;
+                      const attempt = answerFirstDraft.trim();
+                      if (!question || !attempt) return;
+                      answerFirstAttemptRef.current = attempt;
+                      setAnswerFirstHold(null);
+                      void handleSend(question);
+                    }}
+                    onSkip={() => {
+                      const question = answerFirstHold;
+                      if (!question) return;
+                      answerFirstBypassRef.current = true;
+                      setAnswerFirstHold(null);
+                      void handleSend(question);
+                    }}
+                    onCancel={() => {
+                      if (answerFirstHold) prefillInputRef.current?.(answerFirstHold);
+                      setAnswerFirstHold(null);
+                    }}
+                  />
+                  ) : null}
+                  {retrying ? (
                     <div className="flex items-center gap-2 px-4 pt-3 text-[12.5px]">
                       <RotateCcw
                         size={13}
@@ -3018,7 +3096,8 @@ export default function ChatWorkspace() {
                         <X size={12} />
                       </button>
                     </div>
-                  ) : undefined
+                  ) : null}
+                  </>
                 }
                 inputFooter={
                   <QueuedMessages

@@ -34,6 +34,7 @@ from .._turn_runtime_shared import (
     _llm_selection_dict,
     _mastery_loop_managed,
     _mastery_path_id,
+    _normalize_answer_first,
     _note_generation,
     _partner_group_references,
     _reading_material_id,
@@ -203,6 +204,7 @@ class TurnRequestPreparer:
 
             payload = {**payload, "language": get_response_language(default="en")}
         raw_config = dict(payload.get("config", {}) or {})
+        answer_first = _normalize_answer_first(raw_config.pop("answer_first", None))
         linked_task_ids = raw_config.pop("linked_task_ids", None)
         resource_reuse = raw_config.pop("_resource_reuse", None)
         persistent_kbs = raw_config.pop("_persistent_knowledge_bases", None)
@@ -389,6 +391,8 @@ class TurnRequestPreparer:
             ),
             "config": validated_public_config,
         }
+        if answer_first:
+            payload["answer_first"] = answer_first
         reading_workspace_id = _reading_workspace_id(payload.get("reading_workspace_id"))
         reading_material_id = _reading_material_id(payload.get("reading_material_id"))
         reading_material_revision = _reading_material_revision(
@@ -1245,6 +1249,11 @@ class TurnRequestPreparer:
                 elif snapshot_key in snapshot:
                     payload[field] = snapshot[snapshot_key]
 
+        snapshot_attempt = snapshot.get("answerFirstAttempt")
+        if isinstance(snapshot_attempt, str) and snapshot_attempt.strip():
+            replay_config = dict(payload.get("config") or {})
+            replay_config.setdefault("answer_first", {"attempt": snapshot_attempt.strip()})
+            payload["config"] = replay_config
         # Validate the complete replay request before removing the answer it
         # supersedes. A malformed stored snapshot or override must leave the
         # visible conversation intact so the learner can retry safely.

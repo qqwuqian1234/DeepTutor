@@ -153,6 +153,13 @@ class LoopPromptAssembler:
         learner_profile = str((context.metadata or {}).get("learner_profile_prompt") or "")
         if learner_profile:
             blocks.append(PromptBlock("learner_profile", learner_profile))
+        for metadata_key, block_name in (
+            ("answer_first_prompt", "answer_first"),
+            ("teaching_fallback_prompt", "teaching_fallback"),
+        ):
+            extra = str((context.metadata or {}).get(metadata_key) or "").strip()
+            if extra:
+                blocks.append(PromptBlock(block_name, extra))
         if context.persona_context:
             blocks.append(PromptBlock("persona_style", context.persona_context))
         partner_policy = self._partner_turn_policy(context)

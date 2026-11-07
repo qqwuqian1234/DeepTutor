@@ -6406,5 +6406,12 @@
   "Reset learning text": "重置学习文字",
   "language.portuguese": "葡萄牙语",
   "language.japanese": "日语",
-  "language.turkish": "Türkçe"
+  "language.turkish": "Türkçe",
+  "Answer first": "先自己答",
+  "Write your own answer before the explanation": "先写下你的答案，再看讲解",
+  "Phenomenon, reason, or equations": "写下现象、原因，或者方程式",
+  "Compare with the explanation": "对照讲解",
+  "Skip and explain": "直接看讲解",
+  "Off by default. Use it when you want to try before reading the explanation.": "默认关闭。想先自己试一次再看讲解时再打开。",
+  "Your attempt": "你的回答"
 }

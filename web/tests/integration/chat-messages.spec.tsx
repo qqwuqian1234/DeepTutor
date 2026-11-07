@@ -274,7 +274,34 @@ describe('empty reply outcomes', () => {
       onDeleteTurn={() => undefined}
     />);
     expect(screen.getByText(expected)).toBeVisible();
-    if (status === 'cancelled') expect(screen.queryByRole('alert')).toBeNull();
+    if (status === 'cancelled') {
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+    }
+    if (status === 'empty') {
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+    }
+  });
+
+  it('retries a cancelled empty answer', async () => {
+    const regenerate = vi.fn();
+    render(<ChatMessageList
+      messages={[
+        { id: 1, role: 'user', content: 'H2SO5是强酸吗' },
+        {
+          id: 2, role: 'assistant', content: '',
+          events: [{
+            type: 'error', source: 'chat', stage: '', content: 'Turn cancelled', timestamp: 0,
+            metadata: { turn_terminal: true, status: 'cancelled' },
+          }],
+        },
+      ]}
+      isStreaming={false}
+      onCopyAssistantMessage={async () => undefined}
+      onRegenerateMessage={regenerate}
+    />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }));
+    expect(regenerate).toHaveBeenCalledOnce();
   });
 });
 

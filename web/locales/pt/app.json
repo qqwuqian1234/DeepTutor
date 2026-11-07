@@ -6424,5 +6424,12 @@
   "Learning text preview": "Prévia do texto de aprendizado",
   "Reset learning text": "Redefinir texto de aprendizado",
   "language.japanese": "日本語",
-  "language.turkish": "Türkçe"
+  "language.turkish": "Türkçe",
+  "Answer first": "Answer first",
+  "Write your own answer before the explanation": "Write your own answer before the explanation",
+  "Phenomenon, reason, or equations": "Phenomenon, reason, or equations",
+  "Compare with the explanation": "Compare with the explanation",
+  "Skip and explain": "Skip and explain",
+  "Off by default. Use it when you want to try before reading the explanation.": "Off by default. Use it when you want to try before reading the explanation.",
+  "Your attempt": "Your attempt"
 }

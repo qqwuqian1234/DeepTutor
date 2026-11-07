@@ -85,6 +85,166 @@ def _resolve_turn_outcome(
     return status, error
 
 
+_HTML_FENCE_RE = re.compile(r"```html\s*\n([\s\S]*?)```", re.IGNORECASE)
+_CLEAN_ENDINGS = ("。", "！", "？", ".", "!", "?", "…", ">", "`", '"', "”", "’", "'", "）", ")", "]", "」", "』")
+
+
+def _html_region_is_cut_off(fragment: str) -> bool:
+    """A document that opened HTML and never finished it."""
+    text = (fragment or "").strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if "<html" not in lowered and "<!doctype" not in lowered:
+        return False
+    if "</body>" not in lowered or "</html>" not in lowered:
+        return True
+    if text.rfind("<") > text.rfind(">"):
+        return True
+    if lowered.count("<script") != lowered.count("</script>"):
+        return True
+    if lowered.count("<style") != lowered.count("</style>"):
+        return True
+    return False
+
+
+def _markup_problem(text: str, *, zh: bool) -> str:
+    if text.count("```") % 2 == 1:
+        return (
+            "回答停在一个没写完的代码块里。请再试一次。"
+            if zh
+            else "The answer stopped inside an unfinished code block. Please try again."
+        )
+    regions = [match.group(1) for match in _HTML_FENCE_RE.finditer(text)]
+    stripped = text.strip()
+    head = stripped.lower()
+    if head.startswith("<!doctype") or head.startswith("<html"):
+        regions.append(stripped)
+    if any(_html_region_is_cut_off(region) for region in regions):
+        return (
+            "可视化的 HTML 在文档结束前被截断了。请再试一次。"
+            if zh
+            else "The visualization HTML was cut off before the document finished. Please try again."
+        )
+    return ""
+
+
+def _last_model_finish_reason(events: Sequence[dict[str, Any]]) -> str:
+    last = ""
+    for event in events:
+        metadata = event.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        reason = metadata.get("finish_reason")
+        kind = str(metadata.get("call_kind") or "")
+        if reason and kind in {"agent_loop_round", "llm_final_response"}:
+            last = str(reason)
+    return last
+
+
+def _result_is_usable(events: Sequence[dict[str, Any]]) -> bool:
+    for event in events:
+        if event.get("type") != StreamEventType.RESULT.value:
+            continue
+        metadata = event.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        if metadata.get("artifacts"):
+            return True
+        if str(metadata.get("response") or "").strip():
+            return True
+    return False
+
+
+def persisted_answer_problem(
+    content: str,
+    events: Sequence[dict[str, Any]],
+    attachments: Sequence[Any] | None = None,
+    *,
+    language: str = "en",
+) -> str:
+    """Why a would-be completed answer must not be stored as success.
+
+    Empty string means the saved answer is usable. A cut-off visualization or
+    an explanation that stopped mid-sentence at the output limit is not.
+    """
+    from deeptutor.services.llm.types import finish_was_truncated
+
+    zh = str(language or "").lower().startswith("zh")
+    text = str(content or "").strip()
+    markup = _markup_problem(text, zh=zh)
+    if markup:
+        return markup
+    for event in events:
+        if event.get("type") != StreamEventType.RESULT.value:
+            continue
+        metadata = event.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        code = metadata.get("code") if isinstance(metadata.get("code"), dict) else {}
+        blob = "\n".join(
+            part
+            for part in (
+                str(metadata.get("response") or ""),
+                str(code.get("content") or ""),
+            )
+            if part
+        )
+        markup = _markup_problem(blob, zh=zh)
+        if markup:
+            return markup
+    if text or attachments:
+        if (
+            text
+            and finish_was_truncated(_last_model_finish_reason(events))
+            and not text.endswith(_CLEAN_ENDINGS)
+        ):
+            return (
+                "讲解在写完之前就停了。请再试一次。"
+                if zh
+                else "The explanation stopped before it was finished. Please try again."
+            )
+        return ""
+    if _result_is_usable(events):
+        return ""
+    return (
+        "没有保存下可用的讲解。请再试一次。"
+        if zh
+        else "No teaching response was saved. Please try again."
+    )
+
+
+def _normalize_answer_first(value: Any) -> dict[str, str] | None:
+    """The optional attempt a student wrote before the explanation."""
+    if not isinstance(value, dict):
+        return None
+    attempt = str(value.get("attempt") or "").strip()
+    if not attempt:
+        return None
+    return {"attempt": attempt[:8000]}
+
+
+def _format_answer_first_prompt(attempt: str, language: str = "en") -> str:
+    _ = attempt
+    if str(language or "en").lower().startswith("zh"):
+        return (
+            "学生选择先自己写答案，再看讲解。\n"
+            "请先把问题讲清楚：现象、原因，以及相关的方程式。\n"
+            "然后再对照学生的尝试，指出哪里对、哪里缺、哪里要改。\n"
+            "具体、鼓励，不要只用一个对错分数代替讲解。"
+        )
+    return (
+        "The student chose to write their own answer before seeing yours.\n"
+        "Teach the question first: the phenomenon, the reason, and the equations that matter.\n"
+        "Then compare their attempt. Point out what is already right, what is missing, "
+        "and what to change.\n"
+        "Be specific and encouraging. Do not replace the explanation with a score."
+    )
+
+
+def _answer_first_user_note(attempt: str, language: str = "en") -> str:
+    if str(language or "en").lower().startswith("zh"):
+        return f"[学生在看讲解之前写下的回答]\n{attempt}"
+    return f"[Answer the student wrote before the explanation]\n{attempt}"
+
+
 def _resolve_turn_failure_metadata(
     assistant_events: Sequence[dict[str, Any]],
 ) -> tuple[str, bool]:
@@ -897,6 +1057,11 @@ def _request_snapshot_metadata(
         snapshot["createTarget"] = create_target
     if llm_selection:
         snapshot["llmSelection"] = llm_selection
+    answer_first = payload.get("answer_first")
+    if isinstance(answer_first, dict):
+        attempt = str(answer_first.get("attempt") or "").strip()
+        if attempt:
+            snapshot["answerFirstAttempt"] = attempt
     metadata: dict[str, Any] = {"request_snapshot": snapshot}
     client_submission_id = payload.get("client_submission_id")
     if isinstance(client_submission_id, str) and client_submission_id:

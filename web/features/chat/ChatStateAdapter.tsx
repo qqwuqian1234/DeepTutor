@@ -355,6 +355,8 @@ export interface MessageRequestSnapshot {
   capabilityOnce?: boolean;
   /** The note page's learning block this turn filled in (note companion). */
   noteGeneration?: { block_id: string; kind?: string };
+  /** What the student wrote before asking for the explanation. */
+  answerFirstAttempt?: string;
 }
 
 export interface ReadingSelectionSnapshot {
@@ -1267,7 +1269,7 @@ function reduce(state: ProviderState, action: Action): ProviderState {
             stage: "",
             content: action.errorMessage ?? [...events].reverse().find((event) => event.type === "error")?.content ?? "",
             timestamp: Date.now() / 1000,
-            metadata: { turn_terminal: true, status: action.status, retryable: action.status !== "cancelled" },
+            metadata: { turn_terminal: true, status: action.status, retryable: true },
           }];
         }
         if (repaired === last.content && trace === last.trace && events === last.events) return messages;
@@ -2011,6 +2013,9 @@ function hydrateRequestSnapshot(
   }
   if (timedMediaId) snapshot.timedMediaId = timedMediaId;
   if (readingSelection) snapshot.readingSelection = readingSelection;
+  if (typeof stored.answerFirstAttempt === "string" && stored.answerFirstAttempt.trim()) {
+    snapshot.answerFirstAttempt = stored.answerFirstAttempt;
+  }
   if (stored.capabilityOnce === true) snapshot.capabilityOnce = true;
   return snapshot;
 }
@@ -3187,6 +3192,16 @@ export function ChatStateAdapterProvider({
           : {}),
         ...(snapshotConfig && Object.keys(snapshotConfig).length > 0
           ? { config: snapshotConfig }
+          : {}),
+        ...(snapshotConfig &&
+        typeof snapshotConfig.answer_first === "object" &&
+        snapshotConfig.answer_first !== null &&
+        typeof (snapshotConfig.answer_first as { attempt?: unknown }).attempt === "string"
+          ? {
+              answerFirstAttempt: (
+                snapshotConfig.answer_first as { attempt: string }
+              ).attempt,
+            }
           : {}),
         ...(effectiveNotebookReferences?.length
           ? { notebookReferences: effectiveNotebookReferences }
